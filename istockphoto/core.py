@@ -216,7 +216,7 @@ class IstockPhotoDownloader:
             return True
 
     def more_like_this(
-        self, istock_id: typing.Union[str, int], similar: typing.Optional[str] = None
+        self, istock_id: typing.Union[str, int], similar: typing.Literal["content", "color"] = None
     ):
         """
         Similar content
