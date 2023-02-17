@@ -6,4 +6,4 @@
 from .core import IstockPhotoDownloader, MediaType, Orientations, NumberOfPeople
 
 __all__ = ["IstockPhotoDownloader", "MediaType", "Orientations", "NumberOfPeople"]
-__version__ = "0.0.1"
+__version__ = "0.0.2"

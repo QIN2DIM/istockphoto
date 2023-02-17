@@ -7,23 +7,20 @@ from gevent import monkey
 
 monkey.patch_all()
 import os.path
-import random
-from typing import Optional, Union
+import typing
 from urllib.parse import urlparse
-from urllib.request import getproxies
 
 import gevent
 import requests
-import yaml
 from bs4 import BeautifulSoup
 from gevent.queue import Queue
-from .utils import init_log
+from .utils import init_log, make_session, parse_html_and_get_image_urls, handle_html, load_memory
 
 logger = init_log()
 
-_MediaType = Optional[str]
-_OrientationsType = Optional[str]
-_NumberOfPeopleType = Optional[str]
+_MediaType = typing.Optional[str]
+_OrientationsType = typing.Optional[str]
+_NumberOfPeopleType = typing.Optional[str]
 
 _DEFAULT_PAGES = 1
 _DEFAULT_DATASET_FLAG = "undefined"
@@ -50,7 +47,7 @@ class Orientations:
     UNDEFINED = "undefined"
 
     OPTIONAL = {SQUARE, VERTICAL, HORIZONTAL, PANORAMIC_VERTICAL, PANORAMIC_HORIZONTAL, UNDEFINED}
-    DEFAULT = SQUARE
+    DEFAULT = UNDEFINED
 
 
 class NumberOfPeople:
@@ -64,32 +61,12 @@ class NumberOfPeople:
     DEFAULT = NO_PEOPLE
 
 
-class _Memory:
-    def __init__(self, flag: str):
-        self.istock_database = flag
-        self._path_memory = os.path.join(self.istock_database, "_memory.yaml")
-        os.makedirs(os.path.dirname(self._path_memory), exist_ok=True)
-
-        self.memory = self._load_memory()
-
-    def dump_memory(self, container=None):
-        container = set() if container is None else container
-        self.memory = self.memory | container
-        with open(self._path_memory, "w", encoding="utf8") as file:
-            yaml.dump(self.memory, file, Dumper=yaml.Dumper)
-
-    def _load_memory(self) -> Optional[set]:
-        memory = set()
-        for fn in os.listdir(self.istock_database):
-            if fn.endswith(".jpg"):
-                memory.add(fn.replace(".jpg", ""))
-
-        return memory
-
-
 class IstockPhotoDownloader:
     API = "https://www.istockphoto.com/search/2/image"
     MAX_PAGES = 20
+
+    SIMILAR_COLOR = "color"
+    SIMILAR_CONTENT = "content"
 
     def __init__(
         self,
@@ -155,54 +132,8 @@ class IstockPhotoDownloader:
         os.makedirs(self._dir_local, exist_ok=True)
 
         self.workers = Queue()
-        self.delay_queue = Queue()
-
-        self.session = self._make_session()
-
-        self.cache = _Memory(self._dir_local)
-        self.memory = self.cache.memory
-
-    def __del__(self):
-        self._offload()
-
-    @staticmethod
-    def _parse_html_and_get_image_urls(response: requests.Response):
-        container_img_urls = []
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        gallery = soup.find("div", attrs={"data-testid": "gallery-items-container"})
-
-        if not gallery:
-            return container_img_urls
-        img_tags = gallery.find_all("img")
-        for tag in img_tags:
-            container_img_urls.append(tag["src"])
-
-        return container_img_urls
-
-    @staticmethod
-    def _handle_html(url: str, session: requests.Session) -> Optional[requests.Response]:
-        headers = {
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
-            " Chrome/103.0.5060.134 Safari/537.36 Edg/103.0.1264.77"
-        }
-        proxies = getproxies()
-
-        try:
-            response = session.get(url, proxies=proxies, headers=headers)
-        except requests.ConnectionError as err:
-            logger.error(f"ConnectionError[HtmlHandler] - url={url} err={err}")
-            return None
-        else:
-            if response.status_code != 200:
-                logger.warning(f"Unexpected response status - code={response.status_code}")
-                return None
-            return response
-
-    @staticmethod
-    def _make_session() -> requests.Session:
-        logger.debug(f"Init workers session")
-        return requests.session()
+        self.memory = load_memory(istock_database=self._dir_local)
+        self.session = make_session()
 
     def _preload(self):
         if not self.pages:
@@ -229,11 +160,6 @@ class IstockPhotoDownloader:
             self.workers.put(f"{params}&page={i}")
             self._raw_pointer_count += 1
 
-    def _offload(self):
-        while not self.delay_queue.empty():
-            self.memory.add(self.delay_queue.get())
-        self.cache.dump_memory(self.memory)
-
     def _adaptor(self):
         while not self.workers.empty():
             url = self.workers.get()
@@ -242,15 +168,32 @@ class IstockPhotoDownloader:
             elif url.startswith("https://media.istockphoto.com/"):
                 self.download_image(url)
             elif url.startswith(self.API):
-                self.get_image_urls(url)
-            elif self._downloaded_image_count % 60 == 0:
-                self._offload()
+                self._get_image_urls(url)
 
-    def download_image(self, url: str) -> Optional[bool]:
+    def _get_image_urls(self, url: str) -> typing.Optional[bool]:
+        """Get download links for all images in the page"""
+        response = handle_html(url, self.session)
+        if not response:
+            return
+
+        urls = parse_html_and_get_image_urls(response)
+        for url_ in urls:
+            self.workers.put(url_)
+            self._pending_image_count += 1
+
+        self._handled_pointer_count += 1
+        logger.debug(
+            f"Get image url -"
+            f" progress=[{self._handled_pointer_count}/{self._raw_pointer_count}]"
+            f" src={url}"
+        )
+        return True
+
+    def download_image(self, url: str) -> typing.Optional[bool]:
         """Download thumbnail"""
         self._downloaded_image_count += 1
 
-        istock_id = f"{urlparse(url).path.split('id')[-1]}"
+        istock_id = f"{urlparse(url).path.split('/')[2]}"
         fp = os.path.join(self._dir_local, f"{istock_id}.jpg")
 
         # Avoid downloading duplicate images
@@ -265,83 +208,63 @@ class IstockPhotoDownloader:
         else:
             with open(fp, "wb") as file:
                 file.write(resp.content)
-            self.delay_queue.put(istock_id)
             logger.debug(
                 f"Download image -"
                 f" progress=[{self._downloaded_image_count}/{self._pending_image_count}]"
                 f" istock_id={istock_id}"
             )
-            gevent.sleep(random.uniform(0.02, 0.05))
             return True
 
-    def get_image_urls(self, url: str) -> Optional[bool]:
-        """Get download links for all images in the page"""
-        response = self._handle_html(url, self.session)
-        if not response:
-            return
-
-        urls = self._parse_html_and_get_image_urls(response)
-        for url_ in urls:
-            self.workers.put(url_)
-            self._pending_image_count += 1
-
-        self._handled_pointer_count += 1
-        logger.debug(
-            f"Get image url -"
-            f" progress=[{self._handled_pointer_count}/{self._raw_pointer_count}]"
-            f" src={url}"
-        )
-        gevent.sleep(random.uniform(0.02, 0.3))
-        return True
-
-    def mining(self, concurrent_power: int = None):
-        # Parameter check
-        self._preload()
-
-        # Reset concurrent power of collector
-        concurrent_power = (
-            16
-            if not isinstance(concurrent_power, int) or not 1 <= concurrent_power <= 16
-            else concurrent_power
-        )
-        concurrent_power = self.pages if concurrent_power >= self.pages else concurrent_power
-
-        # Setup collector
-        logger.debug(f"Setup [iStock] - power={concurrent_power} pages={self.pages}")
-        task_list = []
-        for _ in range(concurrent_power):
-            task = gevent.spawn(self._adaptor)
-            task_list.append(task)
-        gevent.joinall(task_list)
-        logger.success(f"Task complete - offload={os.path.abspath(self._dir_local)}")
-
-    @staticmethod
-    def _parse_file_count(response: requests.Response) -> Optional[str]:
-        soup = BeautifulSoup(response.text, "html.parser")
-        file_count = soup.find("span", class_="DesktopMediaFilter-module__fileCount___M2uwu")
-        if not file_count:
-            return
-        return file_count.text
-
-    def more_like_this(self, istock_id: Union[str, int], similar: str = "content"):
+    def more_like_this(
+        self, istock_id: typing.Union[str, int], similar: typing.Optional[str] = None
+    ):
         """
         Similar content
 
         :param istock_id:
-        :param similar: content | color
+        :param similar: "content" | "color"
+        :exception KeyError
         :return:
         """
+
+        def parse_file_count(res: requests.Response) -> typing.Optional[str]:
+            soup = BeautifulSoup(res.text, "html.parser")
+            file_count = soup.find("span", class_="DesktopMediaFilter-module__fileCount___M2uwu")
+            if not file_count:
+                return
+            return file_count.text
+
         similar_match = {
             "content": f"https://www.istockphoto.com/search/more-like-this/{istock_id}",
             "color": f"https://www.istockphoto.com/search/2/image?colorsimilarityassetid={istock_id}",
         }
+        similar = (
+            self.SIMILAR_CONTENT
+            if similar not in [self.SIMILAR_CONTENT, self.SIMILAR_COLOR]
+            else similar
+        )
         self.API = similar_match[similar]
 
-        response = self._handle_html(self.API, self.session)
+        response = handle_html(self.API, self.session)
         if not response:
-            return logger.error(
-                f"Could not find source image in istock by the istock_id({istock_id})"
-            )
-        logger.success(f"Search - file_count={self._parse_file_count(response)}")
+            logger.error(f"Could not find source image in istock by the istock_id({istock_id})")
+            raise
+        logger.success(f"Search - file_count={parse_file_count(response)}")
 
         return self
+
+    def mining(self):
+        # Parameter check
+        self._preload()
+
+        # Setup collector
+        workers = 32
+        task_list = []
+        logger.debug(f"Setup [iStock] - phrase={self.phrase} power={workers} pages={self.pages}")
+        for _ in range(workers):
+            task = gevent.spawn(self._adaptor)
+            task_list.append(task)
+        gevent.joinall(task_list)
+        logger.success(
+            f"Task complete - phrase={self.phrase} offload={os.path.abspath(self._dir_local)}"
+        )
