@@ -13,7 +13,7 @@ Gracefully download dataset from iStockPhoto.
 1. **Download PyPi package**
 
    ```bash
-   pip install istockphoto
+   pip install -U istockphoto
    ```
 
 2. **Quickstart**
@@ -26,7 +26,7 @@ Gracefully download dataset from iStockPhoto.
    from istockphoto import IstockPhotoDownloader
    
    if __name__ == '__main__':
-       IstockPhotoDownloader("lizard").mining()
+       IstockPhotoDownloader("bug").mining()
    
    ```
 
