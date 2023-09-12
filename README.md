@@ -1,8 +1,6 @@
 # iStockPhoto Downloader
 
-## Introduction
-
-Gracefully download dataset from iStockPhoto.
+Gracefully download datasets from istock-photo.
 
 ## Quickstart
 
@@ -25,6 +23,8 @@ Gracefully download dataset from iStockPhoto.
        istock = Istock.from_phrase("panda")
        asyncio.run(istock.mining())
    ```
+   ![image](https://github.com/QIN2DIM/istockphoto/assets/62018067/d203bf76-613f-481f-9473-ef6794a78dba)
+
 
    - Similar mode
    
@@ -46,6 +46,8 @@ Gracefully download dataset from iStockPhoto.
            istock.more_like_this(similar)
            asyncio.run(istock.mining())
    ```
+   ![similar drawio](https://github.com/QIN2DIM/istockphoto/assets/62018067/60a76700-1ed5-44b4-8316-c1346e78d116)
+
    
 
 ## What's more
