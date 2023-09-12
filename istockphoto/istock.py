@@ -75,7 +75,7 @@ class Istock:
     client: AsyncClient | None = None
     api: str = "https://www.istockphoto.com/search/2/image"
 
-    power = 60
+    power = 32
     sem = asyncio.Semaphore(power)
 
     def __post_init__(self):
@@ -143,7 +143,7 @@ class Istock:
         """Download thumbnail"""
         async with self.sem:
             while not self.work_queue.empty():
-                url, img_path = self.work_queue.get_nowait()
+                url, img_path = await self.work_queue.get()
                 res = await self.client.get(url, timeout=30)
                 img_path.write_bytes(res.content)
                 self.work_queue.task_done()
