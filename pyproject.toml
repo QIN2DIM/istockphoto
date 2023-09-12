@@ -1,0 +1,44 @@
+# https://python-poetry.org/docs/libraries/#versioning
+# https://pypi.org/project/hcaptcha-challenger/#history
+
+[tool.poetry]
+name = "istockphoto"
+version = "0.1.0"
+description = "Gracefully download dataset from istockphoto"
+license = "GPL-3.0-or-later"
+authors = ["QIN2DIM <yaoqinse@gmail.com>"]
+readme = "README.md"
+homepage = "https://github.com/QIN2DIM/istock_downloader"
+repository = "https://github.com/QIN2DIM/istock_downloader"
+documentation = "https://github.com/QIN2DIM/istock_downloader"
+keywords = ["istockphoto", "downloader", "spider", "istock"]
+packages = [{ include = "istockphoto", format = "sdist" }]
+classifiers = [
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+]
+[virtualenvs]
+# https://python-poetry.org/docs/configuration/#virtualenvsin-project
+# Create a `.venv` virtual environment in the project root
+in-project = true
+
+# https://python-poetry.org/docs/pyproject/#dependencies-and-dependency-groups
+[tool.poetry.dependencies]
+python = "^3.8"
+
+httpx = "*"
+bs4 = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+black = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
