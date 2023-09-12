@@ -14,7 +14,7 @@ Gracefully download dataset from iStockPhoto.
 
 2. **Examples**
 
-   1. Download images about `panda` phrase. 
+   - Download images about `panda` phrase. 
 
    ```python
    import asyncio
@@ -26,7 +26,7 @@ Gracefully download dataset from iStockPhoto.
        asyncio.run(istock.mining())
    ```
 
-   2. Similar mode
+   - Similar mode
    
    ```python
    import asyncio
