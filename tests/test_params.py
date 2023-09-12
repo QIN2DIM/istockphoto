@@ -15,7 +15,7 @@ from istockphoto.istock import Istock
 def test_pages(phrase: str, pages: int):
     istock = Istock.from_phrase(phrase)
 
-    # pages: 60 images per page, default upto 5.
+    # pages: 60 images per page, default upto 1.
     istock.pages = min(5, pages)
 
     asyncio.run(istock.mining())

@@ -52,9 +52,9 @@ class Istock:
     Optional. Default "undefined". Choose from `Orientations()`.
     """
 
-    pages: int = 5
+    pages: int = 1
     """
-    Default 5. Value interval `pages∈[1, 20]`
+    Default 1. Value interval `pages∈[1, 20]`
     """
 
     flag: bool = True
@@ -71,9 +71,12 @@ class Istock:
     """
 
     cases_name: Set[str] = field(default_factory=set)
-    work_queue: asyncio.Queue[str] | None = None
+    work_queue: asyncio.Queue | None = None
     client: AsyncClient | None = None
-    api = "https://www.istockphoto.com/search/2/image"
+    api: str = "https://www.istockphoto.com/search/2/image"
+
+    power = 60
+    sem = asyncio.Semaphore(power)
 
     def __post_init__(self):
         logging.debug(f"Container preload - phrase={self.phrase}")
@@ -82,18 +85,17 @@ class Istock:
 
         self.store_dir = self.tmp_dir.joinpath("istock_tmp", self.phrase)
         self.store_dir.mkdir(parents=True, exist_ok=True)
-        self.cases_name = set(os.listdir(self.store_dir))
 
         headers = {
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.76"
+            "Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.76"
         }
         self.client = AsyncClient(headers=headers)
 
     @classmethod
-    def from_phrase(cls, phrase: str, tmp_dir: Path | None= None, **kwargs):
+    def from_phrase(cls, phrase: str, tmp_dir: Path | None = None, **kwargs):
         tmp_dir = tmp_dir or Path("tmp_dir")
-        return cls(phrase=phrase.strip(), tmp_dir=tmp_dir)
+        return cls(phrase=phrase.strip(), tmp_dir=tmp_dir, **kwargs)
 
     async def preload(self):
         p = urlparse(self.api)
@@ -113,15 +115,9 @@ class Istock:
         img_index_urls = [f"{self.api}{params}&page={i}" for i in range(1, self.pages + 1)]
         logging.info(f"preload - size={len(img_index_urls)}")
 
-        return img_index_urls
+        self.cases_name = set(os.listdir(self.store_dir))
 
-    async def adaptor(self):
-        while not self.work_queue.empty():
-            context = self.work_queue.get_nowait()
-            if not context or not isinstance(context, str):
-                print(f"Drop url - context={context}")
-            elif context.startswith("https://media.istockphoto.com/"):
-                await self.download_image(context)
+        return img_index_urls
 
     async def get_image_urls(self, url: str):
         """Get download links for all images in the page"""
@@ -131,29 +127,40 @@ class Istock:
             if gallery := soup.find("div", attrs={"data-testid": "gallery-items-container"}):
                 img_tags = gallery.find_all("img")
                 for tag in img_tags:
-                    self.work_queue.put_nowait(tag["src"])
+                    url = tag["src"]
+                    if not isinstance(url, str) or not url.startswith(
+                        "https://media.istockphoto.com/"
+                    ):
+                        continue
+                    istock_id = f"{urlparse(url).path.split('/')[2]}"
+                    img_path = self.store_dir.joinpath(f"{istock_id}.jpg")
+                    if img_path.name in self.cases_name:
+                        continue
+                    context = (url, img_path)
+                    self.work_queue.put_nowait(context)
 
-    async def download_image(self, url: str):
+    async def download_image(self):
         """Download thumbnail"""
-        istock_id = f"{urlparse(url).path.split('/')[2]}"
-        img_path = self.store_dir.joinpath(f"{istock_id}.jpg")
-        if img_path.name not in self.cases_name:
-            res = await self.client.get(url, timeout=30)
-            img_path.write_bytes(res.content)
+        async with self.sem:
+            while not self.work_queue.empty():
+                url, img_path = self.work_queue.get_nowait()
+                res = await self.client.get(url, timeout=30)
+                img_path.write_bytes(res.content)
+                self.work_queue.task_done()
 
-    async def more_like_this(
-            self, istock_id: str | int, similar: Literal["content", "color"] = "content"
-    ):
+    def more_like_this(self, istock_id: str | int):
+        if not isinstance(istock_id, str):
+            istock_id = str(istock_id)
+        istock_id = istock_id.replace(".jpg", "")
+
+        # similar https://www.istockphoto.com/search/more-like-this/889083114?assettype=image&phrase=horse
         similar_match = {
             "content": f"https://www.istockphoto.com/search/more-like-this/{istock_id}",
             "color": f"https://www.istockphoto.com/search/2/image?colorsimilarityassetid={istock_id}",
         }
-        self.api = similar_match[similar]
-        response = await self.client.get(self.api)
-        if not response:
-            logging.error(f"Could not find source image in istock by the istock_id({istock_id})")
-            raise
-
+        self.api = similar_match["content"]
+        self.store_dir = self.tmp_dir.joinpath("istock_tmp", f"{self.phrase}_similar_{istock_id}")
+        self.store_dir.mkdir(parents=True, exist_ok=True)
         return self
 
     async def mining(self):
@@ -173,5 +180,13 @@ class Istock:
         logging.info("matching index")
         await asyncio.gather(*[self.get_image_urls(url) for url in urls])
 
-        logging.info("running adaptor")
-        await asyncio.gather(*[self.adaptor() for _ in range(32)])
+        tasks = []
+        for _ in range(self.power):
+            task = asyncio.create_task(self.download_image())
+            tasks.append(task)
+
+        logging.info(f"running adaptor - tasks={self.work_queue.qsize()}")
+        await self.work_queue.join()
+
+        for t in tasks:
+            t.cancel()
