@@ -3,6 +3,6 @@
 # Author     : QIN2DIM
 # Github     : https://github.com/QIN2DIM
 # Description:
-from .istock import Istock
+from istockphoto.istock import Istock
 
 __all__ = ["Istock"]

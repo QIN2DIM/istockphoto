@@ -3,9 +3,9 @@
 
 [tool.poetry]
 name = "istockphoto"
-version = "0.1.1"
+version = "0.1.2"
 description = "Gracefully download dataset from istockphoto"
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 authors = ["QIN2DIM <yaoqinse@gmail.com>"]
 readme = "README.md"
 homepage = "https://github.com/QIN2DIM/istock_downloader"

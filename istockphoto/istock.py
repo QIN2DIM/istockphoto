@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import sys
+from asyncio import Semaphore
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +58,11 @@ class Istock:
     Default 1. Value interval `pages∈[1, 20]`
     """
 
+    power: int = 64
+    """
+    Number of concurrencies
+    """
+
     flag: bool = True
     """
     Optional. Default True. File storage path.
@@ -74,8 +80,6 @@ class Istock:
     work_queue: asyncio.Queue | None = None
     client: AsyncClient | None = None
     api: str = "https://www.istockphoto.com/search/2/image"
-
-    sem = asyncio.Semaphore(60)
 
     def __post_init__(self):
         logging.debug(f"Container preload - phrase={self.phrase}")
@@ -138,9 +142,9 @@ class Istock:
                     context = (url, img_path)
                     self.work_queue.put_nowait(context)
 
-    async def download_image(self, context):
+    async def download_image(self, context, sem: Semaphore):
         """Download thumbnail"""
-        async with self.sem:
+        async with sem:
             url, img_path = context
             res = await self.client.get(url, timeout=30)
             img_path.write_bytes(res.content)
@@ -179,9 +183,10 @@ class Istock:
         await asyncio.gather(*[self.get_image_urls(url) for url in urls])
 
         tasks = []
+        sem = Semaphore(self.power)
         while not self.work_queue.empty():
             context = self.work_queue.get_nowait()
-            task = asyncio.create_task(self.download_image(context))
+            task = asyncio.create_task(self.download_image(context, sem))
             tasks.append(task)
 
         logging.info(f"running adaptor - tasks={self.work_queue.qsize()}")

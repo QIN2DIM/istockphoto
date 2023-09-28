@@ -11,11 +11,12 @@ from istockphoto.istock import Istock
 
 
 @pytest.mark.parametrize("phrase", ["dog", "panda"])
-@pytest.mark.parametrize("pages", [1, 2])
+@pytest.mark.parametrize("pages", [1, 2, 5])
 def test_pages(phrase: str, pages: int):
     istock = Istock.from_phrase(phrase)
 
     # pages: 60 images per page, default upto 1.
     istock.pages = min(5, pages)
+    istock.power = 64
 
     asyncio.run(istock.mining())
