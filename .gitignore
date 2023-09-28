@@ -131,3 +131,5 @@ dmypy.json
 **/tmp_dir
 poetry.lock
 compile.py
+
+tests-private/

@@ -75,8 +75,7 @@ class Istock:
     client: AsyncClient | None = None
     api: str = "https://www.istockphoto.com/search/2/image"
 
-    power = 32
-    sem = asyncio.Semaphore(power)
+    sem = asyncio.Semaphore(60)
 
     def __post_init__(self):
         logging.debug(f"Container preload - phrase={self.phrase}")
@@ -139,14 +138,13 @@ class Istock:
                     context = (url, img_path)
                     self.work_queue.put_nowait(context)
 
-    async def download_image(self):
+    async def download_image(self, context):
         """Download thumbnail"""
         async with self.sem:
-            while not self.work_queue.empty():
-                url, img_path = await self.work_queue.get()
-                res = await self.client.get(url, timeout=30)
-                img_path.write_bytes(res.content)
-                self.work_queue.task_done()
+            url, img_path = context
+            res = await self.client.get(url, timeout=30)
+            img_path.write_bytes(res.content)
+            self.work_queue.task_done()
 
     def more_like_this(self, istock_id: str | int):
         if not isinstance(istock_id, str):
@@ -181,12 +179,10 @@ class Istock:
         await asyncio.gather(*[self.get_image_urls(url) for url in urls])
 
         tasks = []
-        for _ in range(self.power):
-            task = asyncio.create_task(self.download_image())
+        while not self.work_queue.empty():
+            context = self.work_queue.get_nowait()
+            task = asyncio.create_task(self.download_image(context))
             tasks.append(task)
 
         logging.info(f"running adaptor - tasks={self.work_queue.qsize()}")
-        await self.work_queue.join()
-
-        for t in tasks:
-            t.cancel()
+        await asyncio.gather(*tasks)
